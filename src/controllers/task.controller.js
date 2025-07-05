@@ -102,10 +102,14 @@ exports.getTaskById = async (req, res) => {
 // PUT /tasks/:id
 exports.updateTask = async (req, res) => {
   const taskId = req.params.id;
+
   try {
-    const task = await Task.findByPk(taskId);
+    const task = await Task.findByPk(taskId, {
+      include: [{ model: Document, as: 'documents' }]
+    });
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
+    // Handle both JSON and multipart/form-data
     const updates = {
       title: req.body.title || task.title,
       description: req.body.description || task.description,
@@ -116,7 +120,32 @@ exports.updateTask = async (req, res) => {
     };
 
     await task.update(updates);
-    res.json({ message: 'Task updated', task });
+
+    if (req.files && req.files.length > 0) {
+      // Delete existing files from storage
+      for (const doc of task.documents) {
+        const filePath = path.join(__dirname, '../uploads', doc.filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        await doc.destroy();
+      }
+
+      // Save new files to DB
+      for (const file of req.files) {
+        await Document.create({
+          filename: file.filename,
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          taskId: task.id,
+        });
+      }
+    }
+
+    const updatedTask = await Task.findByPk(taskId, {
+      include: [{ model: Document, as: 'documents' }]
+    });
+
+    res.json({ message: 'Task updated', task: updatedTask });
   } catch (err) {
     console.error('Update task error:', err);
     res.status(500).json({ message: 'Failed to update task' });
